@@ -1,8 +1,27 @@
+import { parseRemoteArguments, profileExitCode } from '../remote-device/ssh-profile-config.js';
 import { MCPDevice, getRemoteDeviceConfigPath } from '../remote-device/device.js';
 import fs from 'fs/promises';
 import os from 'os';
 
 export async function runRemote() {
+    let cli;
+    try { cli = parseRemoteArguments(process.argv.slice(3)); }
+    catch (error) {
+        console.error(error instanceof Error ? error.message : 'Invalid remote arguments');
+        process.exitCode = profileExitCode(error);
+        return;
+    }
+    if (cli.profile && !cli.help) {
+        if (!process.argv.includes('--debug')) console.debug = () => {};
+        try {
+            const { runSshProfile } = await import('../remote-device/ssh-profile-device.js');
+            await runSshProfile(cli);
+        } catch (error) {
+            console.error(error instanceof Error ? error.message : 'SSH profile failed');
+            process.exitCode = profileExitCode(error);
+        }
+        return;
+    }
     if (process.argv.includes('--help') || process.argv.includes('-h')) {
         console.log(`Desktop Commander Remote MCP device
 
@@ -10,6 +29,11 @@ Usage:
   desktop-commander remote [options]
 
 Options:
+  --profile NAME        Independent SSH-backed device (requires --config)
+  --config FILE         SSH profile JSON; local absolute paths, POSIX node
+  --doctor              Verify SSH, MCP tools and node identity; no cloud login
+  --enroll              Authorize this profile as a separate cloud device, then exit
+  --non-interactive     Serve an already-enrolled profile without browser prompts
   --logout              Remove saved local Remote MCP credentials and exit
   --no-persist-session  Do not reuse or save authentication for this run
   --disable-no-sleep    Do not prevent sleep while the remote device is running

@@ -34,7 +34,7 @@ const CLIENT_ID = 'mcp-device';
 export class DeviceAuthenticator {
     private baseServerUrl: string;
 
-    constructor(baseServerUrl: string) {
+    constructor(baseServerUrl: string, private readonly options: { deviceName?: string; signal?: AbortSignal; openBrowser?: boolean } = {}) {
         this.baseServerUrl = baseServerUrl;
     }
 
@@ -69,11 +69,12 @@ export class DeviceAuthenticator {
 
         const response = await fetch(`${this.baseServerUrl}/device/start`, {
             method: 'POST',
+            signal: this.options.signal,
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 client_id: CLIENT_ID,
                 scope: 'mcp:tools',
-                device_name: os.hostname(),
+                device_name: this.options.deviceName ?? os.hostname(),
                 device_type: 'mcp',
                 device_id: deviceId,
                 code_challenge: codeChallenge,
@@ -103,7 +104,7 @@ export class DeviceAuthenticator {
         console.log(`   Code expires in ${Math.floor(deviceAuth.expires_in / 60)} minutes.\n`);
 
         // Try to open browser automatically
-        open(deviceAuth.verification_uri_complete).catch(() => {
+        if (this.options.openBrowser !== false) open(deviceAuth.verification_uri_complete).catch(() => {
             console.log('   - Could not open browser automatically.');
             console.log(`   - Please visit: ${deviceAuth.verification_uri}\n`);
         });
@@ -125,6 +126,7 @@ export class DeviceAuthenticator {
             try {
                 const response = await fetch(`${this.baseServerUrl}/device/poll`, {
                     method: 'POST',
+                    signal: this.options.signal,
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         device_code: deviceAuth.device_code,
@@ -165,6 +167,7 @@ export class DeviceAuthenticator {
                 await captureRemote('remote_device_auth_failed', { error: errorMessage });
                 throw new Error(errorMessage);
             } catch (fetchError) {
+                if (this.options.signal?.aborted) throw fetchError;
                 // Network error - retry unless we're out of attempts
                 if (attempt >= maxAttempts) {
                     await captureRemote('remote_device_auth_network_error', { error: fetchError });
@@ -181,6 +184,12 @@ export class DeviceAuthenticator {
     }
 
     private sleep(ms: number): Promise<void> {
-        return new Promise((resolve) => setTimeout(resolve, ms));
+        return new Promise((resolve, reject) => {
+            const signal = this.options.signal;
+            if (signal?.aborted) { reject(new Error('AUTH_CANCELLED')); return; }
+            const cancel = () => { clearTimeout(timer); reject(new Error('AUTH_CANCELLED')); };
+            const timer = setTimeout(() => { signal?.removeEventListener('abort', cancel); resolve(); }, ms);
+            signal?.addEventListener('abort', cancel, { once: true });
+        });
     }
 }

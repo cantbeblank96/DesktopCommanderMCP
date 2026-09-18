@@ -63,7 +63,11 @@
     "logs:clear": "npm run build && node scripts/clear-fuzzy-logs.js",
     "logs:export": "npm run build && node scripts/export-fuzzy-logs.js",
     "count-tokens": "npm run build && node scripts/count-tokens.js",
-    "count-tokens:json": "npm run build && node scripts/count-tokens.js --json"
+    "count-tokens:json": "npm run build && node scripts/count-tokens.js --json",
+    "test:ssh": "npm run build && node --test test/test-ssh-backed-devices.js",
+    "test:ssh:loopback": "npm run build && node --test test/integration/test-ssh-backed-loopback.js",
+    "test:ssh:target": "npm run build && node --test test/integration/test-ssh-backed-target.js",
+    "test:ssh:fleet": "python3 -m unittest discover -s test -p test_ssh_fleet.py -v"
   },
   "publishConfig": {
     "access": "public"

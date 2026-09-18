@@ -58,3 +58,7 @@ test_files/
 test_fix.js
 test_search.js
 .ripgrep-downloads/
+
+# Python fleet manager bytecode
+__pycache__/
+*.py[cod]

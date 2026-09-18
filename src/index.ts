@@ -3,6 +3,7 @@
 // MUST be first: raises the libuv threadpool size before any fs work is
 // submitted. See src/bootstrap.ts for why import order matters.
 import './bootstrap.js';
+import { installStdioExitHandler } from './utils/stdio-lifecycle.js';
 import { FilteredStdioServerTransport } from './custom-stdio.js';
 import { server, flushDeferredMessages } from './server.js';
 import { commandManager } from './command-manager.js';
@@ -40,6 +41,14 @@ async function runServer() {
       await runRemote();
       return;
     }
+
+    // Optional ownership boundary for SSH-managed stdio backends. Default local
+    // and remote-device entrypoints retain their existing lifecycle behavior.
+    installStdioExitHandler({
+      enabled: ['1', 'true', 'yes', 'on'].includes(
+        process.env.DESKTOP_COMMANDER_EXIT_ON_STDIN_CLOSE?.trim().toLowerCase() ?? ''),
+      close: () => server.close(),
+    });
 
     // Parse command line arguments for onboarding control
     const DISABLE_ONBOARDING = process.argv.includes('--no-onboarding');

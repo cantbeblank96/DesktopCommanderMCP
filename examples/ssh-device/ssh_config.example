@@ -1,0 +1,13 @@
+# Copy outside the repository, then replace the illustrative values.
+# Pin the host key out of band before enabling non-interactive access.
+Host rdc-node-b
+    HostName 10.0.0.25
+    User dc
+    Port 2222
+    IdentityFile /home/alice/.ssh/id_ed25519_node_b
+    IdentitiesOnly yes
+    UserKnownHostsFile /home/alice/.ssh/known_hosts_rdc
+    StrictHostKeyChecking yes
+    BatchMode yes
+    ForwardAgent no
+    # ProxyJump gateway-alias

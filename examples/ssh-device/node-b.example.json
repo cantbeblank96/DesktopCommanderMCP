@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "profile": "node-b",
+  "deviceName": "node-b (via machine-a)",
+  "backend": {
+    "type": "ssh",
+    "sshExecutable": "/usr/bin/ssh",
+    "sshConfigFile": "/home/alice/.ssh/rdc_nodes",
+    "hostAlias": "rdc-node-b",
+    "remoteLauncher": "/home/dc/.local/bin/rdc-stdio"
+  },
+  "verification": {
+    "expectedHostname": "node-b",
+    "expectedUser": "dc"
+  },
+  "lifecycle": {
+    "initializeTimeoutMs": 20000,
+    "healthIntervalMs": 30000,
+    "healthTimeoutMs": 5000,
+    "healthFailureThreshold": 3,
+    "reconnectMaxDelayMs": 30000,
+    "shutdownGraceMs": 8000
+  }
+}

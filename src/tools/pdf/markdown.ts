@@ -252,9 +252,13 @@ async function getChromePath(): Promise<string | undefined> {
  * Call this at server startup to trigger download in background if needed.
  * Returns immediately, download happens in background.
  */
-export function ensureChromeAvailable(): void {
+export function ensureChromeAvailable(resolveChrome: () => Promise<string | undefined> = getChromePath): void {
+    // Headless SSH nodes can skip this optional startup download. Explicit PDF
+    // generation still follows its normal browser-resolution path.
+    const disabled = process.env.DESKTOP_COMMANDER_SKIP_CHROME_PREFLIGHT?.trim().toLowerCase();
+    if (disabled && ['1', 'true', 'yes', 'on'].includes(disabled)) return;
     // Don't await - let it run in background
-    getChromePath().catch((error) => {
+    resolveChrome().catch((error) => {
         console.error('Background Chrome check failed:', error);
     });
 }

@@ -126,6 +126,35 @@ async function clockAwareFetch(input: RequestInfo | URL, init?: RequestInit): Pr
 }
 
 export class RemoteChannel {
+    // Legacy callers default to a local, available backend. SSH profiles opt in.
+    private backendAvailable = true;
+    private backendManaged = false;
+    private backendRevision = 0;
+    private executionPlatform: string = process.platform;
+    private presenceWriteChain: Promise<void> = Promise.resolve();
+    private authorizationLostHandler?: () => void;
+
+    onAuthorizationLost(handler: () => void): void { this.authorizationLostHandler = handler; }
+
+    setBackendAvailability(ready: boolean, platform?: string): Promise<void> {
+        this.backendManaged = true;
+        this.backendAvailable = ready;
+        ++this.backendRevision;
+        if (platform) this.executionPlatform = platform;
+        this.syncReachabilityStatus();
+        if (!ready) {
+            this.presenceTracked = false;
+            const channel = this.channel;
+            this.presenceWriteChain = this.presenceWriteChain.catch(() => {}).then(async () => {
+                if (channel && channel === this.channel) {
+                    await this.withTimeout(() => channel.untrack().then(() => {}), 1500, 'presence untrack').catch(() => {});
+                }
+            });
+            return this.presenceWriteChain;
+        }
+        if (this.channel?.state === 'joined') return this.trackPresenceWithRetry(0, 1);
+        return Promise.resolve();
+    }
     private client: SupabaseClient | null = null;
     private channel: RealtimeChannel | null = null;
     private heartbeatInterval: NodeJS.Timeout | null = null;
@@ -348,6 +377,7 @@ export class RemoteChannel {
             }
 
             this.sessionLost = true;
+            this.authorizationLostHandler?.();
             await captureRemote('remote_channel_session_lost', {
                 hadRefreshToken: !!cached?.refresh_token,
             });
@@ -370,7 +400,8 @@ export class RemoteChannel {
             }
 
             try {
-                await this.setOffline(this.deviceId ?? undefined);
+                if (this.backendManaged && this.deviceId) await this.setOnlineStatus(this.deviceId, 'offline');
+                else await this.setOffline(this.deviceId ?? undefined);
             } catch { /* best effort */ }
 
             console.error('\n⚠️  Remote session expired and could not be renewed.');
@@ -456,7 +487,7 @@ export class RemoteChannel {
             // transport_broadcast_v1 is NOT set here: the server treats it as
             // binding, so it is written only once presence is proven.
             await this.updateDevice(existingDevice.id, {
-                status: 'online',
+                status: this.backendManaged ? 'offline' : 'online',
                 last_seen: new Date().toISOString(),
                 capabilities: this.capabilitiesPayload(false),
                 device_name: deviceName
@@ -489,10 +520,12 @@ export class RemoteChannel {
      * dashboard. `presenceTracked` lets the health check retry later.
      */
     private async trackPresenceWithRetry(recovered: number, attempts = 3): Promise<void> {
-        if (this.isTrackingPresence) return; // never stack pushes on a wedged socket
+        if (this.isTrackingPresence || this.backendAvailable === false || this.shuttingDown || this.sessionLost) return;
         this.isTrackingPresence = true;
+        const task = this.presenceWriteChain.catch(() => {}).then(() => this.trackPresenceInner(recovered, attempts));
+        this.presenceWriteChain = task;
         try {
-            await this.trackPresenceInner(recovered, attempts);
+            await task;
         } finally {
             this.isTrackingPresence = false;
         }
@@ -500,19 +533,22 @@ export class RemoteChannel {
 
     private async trackPresenceInner(recovered: number, attempts: number): Promise<void> {
         for (let attempt = 1; attempt <= attempts; attempt++) {
-            if (!this.channel || this.channel.state !== 'joined') return;
+            if (!this.isReachable()) return;
+            const channel = this.channel!;
+            const revision = this.backendRevision;
             let status: string;
             try {
-                status = await this.channel.track({
+                status = await channel.track({
                     device_id: this.deviceId,
                     device_name: this.deviceName,
                     app_version: VERSION,
-                    platform: process.platform
+                    platform: this.executionPlatform
                 });
             } catch (trackErr: any) {
                 status = `threw: ${trackErr?.message}`;
             }
 
+            if (channel !== this.channel || revision !== this.backendRevision || !this.isReachable()) return;
             if (status === 'ok') {
                 this.presenceTracked = true;
                 console.log(`👋 Presence tracked (device ${this.deviceId} visible as online)`);
@@ -584,6 +620,7 @@ export class RemoteChannel {
     /** Create and subscribe the private channel (initial join and recreation). */
     private createChannel(): Promise<void> {
         return new Promise((resolve, reject) => {
+            if (this.shuttingDown || this.sessionLost) return reject(new Error('Device is stopping'));
             if (!this.client || !this.user?.id || !this.onToolCall || !this.deviceId) {
                 // deviceId is the presence KEY; a null key gets a random one and
                 // the dashboard's lookup by device id silently misses.
@@ -595,14 +632,15 @@ export class RemoteChannel {
             // Presence, keyed by device id.
             const channelName = `user:${this.user.id}`;
             console.debug(`[DEBUG] Creating channel: ${channelName}`);
-            this.channel = this.client.channel(channelName, {
+            const channel = this.client.channel(channelName, {
                 config: {
                     private: true,
                     // Non-null: the guard above rejects when !deviceId.
                     presence: { key: this.deviceId, enabled: true }
                 }
-            })
-                .on(
+            });
+            this.channel = channel;
+            channel.on(
                     'broadcast',
                     { event: 'new_call' },
                     ({ payload }: any) => {
@@ -612,6 +650,9 @@ export class RemoteChannel {
                     }
                 )
                 .subscribe((status: string, err: any) => {
+                    if (this.channel !== channel || this.shuttingDown || this.sessionLost) {
+                        reject(new Error('Obsolete channel subscription')); return;
+                    }
                     // Debug: Log all subscription status events
                     console.debug(`[DEBUG] Channel subscription status: ${status}${err ? ' (error: ' + (err?.message || err) + ')' : ''} — ${this.connState()}`);
 
@@ -774,7 +815,7 @@ export class RemoteChannel {
      * Check if channel is connected, recreate if not.
      */
     private checkConnectionHealth(): void {
-        if (this.sessionLost) return;
+        if (this.sessionLost || this.shuttingDown) return;
         if (!this.channel || !this.client || !this.user?.id || !this.onToolCall) {
             return;
         }
@@ -808,7 +849,7 @@ export class RemoteChannel {
             // lands the dashboard shows this device offline, and if track()
             // already failed its retries the capability is withdrawn too, so
             // the server fails every dispatch to it fast.
-            if (!this.presenceTracked && this.deviceId && !this.isTrackingPresence) {
+            if (this.backendAvailable !== false && !this.presenceTracked && this.deviceId && !this.isTrackingPresence) {
                 console.debug('[DEBUG] Channel joined but presence not tracked — retrying track()');
                 this.trackPresenceWithRetry(0, 1).catch(() => { /* logged inside */ });
             }
@@ -886,6 +927,7 @@ export class RemoteChannel {
      * Recreate the channel by destroying old one and creating fresh instance.
      */
     private async recreateChannel(): Promise<void> {
+        if (this.shuttingDown || this.sessionLost) return;
         if (!this.client || !this.user?.id || !this.onToolCall) {
             console.warn('Cannot recreate channel - missing parameters');
             console.debug('[DEBUG] recreateChannel() aborted - missing prerequisites');
@@ -910,6 +952,7 @@ export class RemoteChannel {
             const backoffMs = Math.min(30_000, 1000 * 2 ** Math.min(this.reconnectAttempt, 5)) * (0.5 + Math.random());
             console.debug(`[DEBUG] Reconnect backoff: ${Math.round(backoffMs)}ms`);
             await this.sleep(backoffMs);
+            if (this.shuttingDown || this.sessionLost) return;
 
             // realtime-js runs its own rejoin timer, and the backoff above gives
             // it a window to win: the old channel can come back 'joined' while we
@@ -953,6 +996,7 @@ export class RemoteChannel {
                 // recreate. Wait for the state to settle before rebuilding.
                 await this.waitForSocketSettled();
 
+                if (this.shuttingDown || this.sessionLost) return;
                 console.debug('[DEBUG] Calling createChannel() for recreation');
                 await this.createChannel();
             }, RECREATE_TIMEOUT_MS, 'recreateChannel');
@@ -990,18 +1034,20 @@ export class RemoteChannel {
      * anyway), matching prior behaviour — so device.ts's in-memory guard is what
      * actually guarantees exactly-once within a process.
      */
-    async markCallExecuting(callId: string): Promise<boolean> {
+    async markCallExecuting(callId: string, strict = false): Promise<boolean> {
         if (!this.client) throw new Error('Client not initialized');
-        const { data, error } = await this.client
-            .from('mcp_remote_calls')
-            .update({ status: 'executing' })
-            .eq('id', callId)
-            .eq('status', 'pending')
-            .select('id');
+        let query = this.client.from('mcp_remote_calls').update({ status: 'executing' })
+            .eq('id', callId).eq('status', 'pending');
+        if (strict) {
+            if (!this.deviceId) throw new Error('DEVICE_NOT_REGISTERED');
+            query = query.eq('device_id', this.deviceId).abortSignal(AbortSignal.timeout(5000));
+        }
+        const { data, error } = await query.select('id');
 
         if (error) {
             console.error('[DEBUG] Failed to mark call executing:', error.message);
             await captureRemote('remote_channel_mark_call_executing_error', { error });
+            if (strict) throw new Error('CALL_CLAIM_FAILED: operation was not dispatched');
             return true; // preserve legacy behavior: execution proceeds despite the write error
         }
 
@@ -1014,7 +1060,7 @@ export class RemoteChannel {
         return claimed;
     }
 
-    async updateCallResult(callId: string, status: string, result: any = null, errorMessage: string | null = null) {
+    async updateCallResult(callId: string, status: string, result: any = null, errorMessage: string | null = null, strict = false) {
         if (!this.client) throw new Error('Client not initialized');
         const updateData: any = {
             status: status,
@@ -1041,10 +1087,15 @@ export class RemoteChannel {
                 (result !== null ? ` resultBytes=~${JSON.stringify(updateData.result)?.length ?? 0}` : '')
             );
         }
-        const { error } = await this.client
-            .from('mcp_remote_calls')
-            .update(updateData)
-            .eq('id', callId);
+        let query = this.client.from('mcp_remote_calls').update(updateData).eq('id', callId);
+        if (strict) {
+            if (!this.deviceId) throw new Error('DEVICE_NOT_REGISTERED');
+            query = query.eq('device_id', this.deviceId).abortSignal(AbortSignal.timeout(5000));
+            const { data, error } = await query.select('id');
+            if (error || !data?.length) throw new Error('RESULT_UPLOAD_FAILED: cached result retained; tool will not be replayed');
+            return;
+        }
+        const { error } = await query;
 
         if (error) {
             console.error('[DEBUG] Failed to update call result:', error.message);
@@ -1071,7 +1122,7 @@ export class RemoteChannel {
 
     /** Reachable means the private channel is joined. Gates the heartbeat and `status`. */
     private isReachable(): boolean {
-        return this.channel?.state === 'joined';
+        return this.channel?.state === 'joined' && this.backendAvailable !== false && !this.sessionLost && !this.shuttingDown;
     }
 
     /**
@@ -1099,11 +1150,9 @@ export class RemoteChannel {
             console.debug(`[DEBUG] Status write '${status}' suppressed — teardown in progress`);
             return;
         }
-        this.statusWriteChain = this.statusWriteChain
-            .then(() => (this.deviceId ? this.setOnlineStatus(this.deviceId, status) : undefined))
-            .catch((e: any) => {
-                console.error('[DEBUG] Status write failed:', e?.message);
-            });
+        if (this.deviceId) void this.setOnlineStatus(this.deviceId, status).catch((e: any) => {
+            console.error('[DEBUG] Status write failed:', e?.message);
+        });
     }
 
     /**
@@ -1139,17 +1188,8 @@ export class RemoteChannel {
                 return;
             }
 
-            const { error } = await this.client
-                .from('mcp_devices')
-                .update({ last_seen: new Date().toISOString(), status: 'online' })
-                .eq('id', deviceId);
-
-            if (error) {
-                console.error('[DEBUG] Heartbeat update failed:', error.message);
-                await captureRemote('remote_channel_heartbeat_error', { error });
-            } else {
-                console.debug('[DEBUG] last_seen bookkeeping write ok:', deviceId);
-            }
+            await this.setOnlineStatus(deviceId, 'online');
+            console.debug('[DEBUG] last_seen bookkeeping write complete:', deviceId);
         } catch (error: any) {
             console.error('Heartbeat failed:', error.message);
             await captureRemote('remote_channel_heartbeat_error', { error });
@@ -1230,8 +1270,15 @@ export class RemoteChannel {
         this.stopTokenRefresh();
     }
 
-    async setOnlineStatus(deviceId: string, status: 'online' | 'offline') {
+    setOnlineStatus(deviceId: string, status: 'online' | 'offline'): Promise<void> {
+        const task = this.statusWriteChain.catch(() => {}).then(() => this.writeOnlineStatus(deviceId, status));
+        this.statusWriteChain = task;
+        return task;
+    }
+
+    private async writeOnlineStatus(deviceId: string, status: 'online' | 'offline'): Promise<void> {
         if (!this.client) return;
+        if (status === 'online' && !this.isReachable()) status = 'offline';
 
         // Only log if status changed
         if (this.lastDeviceStatus !== status) {
@@ -1239,10 +1286,10 @@ export class RemoteChannel {
             this.lastDeviceStatus = status;
         }
 
-        const { error } = await this.client
-            .from('mcp_devices')
-            .update({ status: status, last_seen: new Date().toISOString() })
-            .eq('id', deviceId);
+        let query = this.client.from('mcp_devices')
+            .update({ status: status, last_seen: new Date().toISOString() }).eq('id', deviceId);
+        if (this.backendManaged) query = query.abortSignal(AbortSignal.timeout(3000));
+        const { error } = await query;
 
         if (error) {
             console.error(`[DEBUG] Failed to set status ${status}:`, error.message);
@@ -1355,6 +1402,19 @@ export class RemoteChannel {
             console.error('❌ Error in blocking offline update:', error.message);
             console.debug('[DEBUG] setOffline() error stack:', error.stack);
             await captureRemote('remote_channel_offline_update_error', { error });
+        }
+    }
+
+    /** SSH profile cleanup avoids the legacy token-refreshing subprocess. */
+    async closeProfileConnection(deviceId?: string): Promise<void> {
+        this.stopHeartbeat();
+        void this.setBackendAvailability(false).catch(() => {});
+        if (deviceId) await this.withTimeout(() => this.setOnlineStatus(deviceId, 'offline'), 3500, 'offline update').catch(() => {});
+        await this.unsubscribe();
+        try { await this.client?.removeAllChannels(); }
+        finally {
+            try { (this.client as any)?.realtime?.disconnect?.(); } catch { /* best effort */ }
+            this.sessionRefreshedHandler = null;
         }
     }
 

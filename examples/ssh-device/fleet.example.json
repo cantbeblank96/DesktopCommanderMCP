@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "inventoryScript": "/home/bridge/project/scripts/cloud/check_cloud_gpu.sh",
+  "inventorySha256": "REPLACE_WITH_REVIEWED_INVENTORY_SHA256",
+  "sshKey": "/home/bridge/.ssh/id_ed25519_nodes",
+  "knownHosts": "/home/bridge/.ssh/known_hosts",
+  "bridgeRelease": "/home/bridge/.local/share/rdc-ssh/bridge-builds/RELEASE",
+  "bundleArchive": "/home/bridge/releases/node-runtime.tar.gz",
+  "bundleSha256": "REPLACE_WITH_BUNDLE_SHA256",
+  "releaseId": "RELEASE",
+  "stateDirectory": "/home/bridge/.local/state/rdc-ssh-fleet/cluster",
+  "cloudAnchorProfile": "cci-2202",
+  "intervalSeconds": 120
+}
