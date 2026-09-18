@@ -1,6 +1,21 @@
 # Desktop Commander MCP
 ### Search, update, manage files and run terminal commands with AI
 
+## Fork extension: SSH-backed Devices
+
+This fork adds independently authorized SSH-backed devices: machine A runs the
+remote bridge while the existing file and process tools execute on machine B.
+The original local-device mode remains available. Build this fork; the upstream
+`npx ...@latest` package does **not** contain these changes.
+
+See [implementation and setup](notes/SSH_DEVICE_IMPLEMENTATION.md),
+[fleet discovery and browser authorization](notes/SSH_DEVICE_FLEET.md), and
+[current verification status](notes/SSH_DEVICE_RELEASE_STATUS.md).
+Examples are in [`examples/ssh-device/`](examples/ssh-device/).
+Each new device requires its own browser authorization. Deployment or a
+successful SSH check alone does not add a device to the website.
+
+
 [![npm downloads](https://img.shields.io/npm/dw/@wonderwhy-er/desktop-commander)](https://www.npmjs.com/package/@wonderwhy-er/desktop-commander)
 [![AgentAudit Verified](https://agentaudit.dev/api/badge/desktop-commander)](https://agentaudit.dev/skills/desktop-commander)
 [![Trust Score](https://archestra.ai/mcp-catalog/api/badge/quality/wonderwhy-er/DesktopCommanderMCP)](https://archestra.ai/mcp-catalog/wonderwhy-er__desktopcommandermcp)
