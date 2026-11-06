@@ -123,6 +123,15 @@ class FleetTests(unittest.TestCase):
             report=self.fleet.sync(prepare=True,enroll=True)
             self.assertFalse(report['cloudVerified']); start.assert_not_called()
 
+    def test_cloud_requests_identify_fleet_client(self):
+        with patch.object(lib.urllib.request, 'build_opener') as build_opener:
+            opener = build_opener.return_value
+            opener.open.return_value.__enter__.return_value.read.return_value = b'[]'
+            self.assertEqual(lib.api_get('https://example.com', {'Authorization': 'Bearer test'}), [])
+            request = opener.open.call_args.args[0]
+            self.assertEqual(request.get_header('User-agent'), 'DesktopCommanderFleet')
+            self.assertEqual(request.get_header('Authorization'), 'Bearer test')
+
     def test_revoked_saved_device_not_automatically_reenrolled(self):
         self.local_profile(credentials=True)
         with patch.object(self.fleet,'start') as start:
@@ -155,6 +164,16 @@ class FleetTests(unittest.TestCase):
             start.assert_not_called()
             self.assertEqual(self.sync([],prepare=True,enroll=True)['status'],'AUTHORIZATION_PENDING')
             start.assert_called_once_with(2201,enroll=True,force_auth=False)
+
+    def test_registered_only_skips_new_nodes_and_starts_existing_profiles(self):
+        with patch.object(self.fleet,'prepare') as prepare, patch.object(self.fleet,'start',return_value='BRIDGE_STARTED') as start:
+            self.assertEqual(self.sync([],prepare=True,registered_only=True)['status'],'UNREGISTERED_SKIPPED')
+            prepare.assert_not_called(); start.assert_not_called()
+
+            self.local_profile(credentials=True)
+            cloud=[{'id':'device-one','device_name':self.name,'status':'offline'}]
+            self.assertEqual(self.sync(cloud,prepare=True,registered_only=True)['status'],'BRIDGE_STARTED')
+            prepare.assert_not_called(); start.assert_called_once_with(2201)
 
     def test_expired_auth_attempt_not_repeated_without_operator(self):
         self.local_profile(); self.fleet.save(2201,{'authorizationAttempted':True})

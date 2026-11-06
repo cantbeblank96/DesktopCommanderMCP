@@ -202,7 +202,9 @@ def api_get(url: str, headers: dict[str, str] | None = None) -> Any:
         def redirect_request(self, req, fp, code, msg, hdrs, newurl):
             return None
     opener = urllib.request.build_opener(NoRedirect)
-    request = urllib.request.Request(url, headers=headers or {})
+    request = urllib.request.Request(url, headers={
+        "User-Agent": "DesktopCommanderFleet", "Accept": "application/json", **(headers or {}),
+    })
     with opener.open(request, timeout=12) as response:
         content = response.read(2 * 1024 * 1024 + 1)
     if len(content) > 2 * 1024 * 1024:
@@ -469,7 +471,7 @@ class Fleet:
         return 'AUTHORIZATION_PENDING' if enroll else 'BRIDGE_STARTED'
 
     def sync(self, *, prepare: bool=False, enroll: bool=False, ports: list[int] | None=None,
-             force_auth: bool=False) -> dict[str,Any]:
+             force_auth: bool=False, registered_only: bool=False) -> dict[str,Any]:
         self.reap()
         rows=self.scan(ports)
         cloud_error=None
@@ -494,12 +496,14 @@ class Fleet:
                     row['status']='ALREADY_IN_DEVICES_UNMANAGED'; continue
                 if row['ssh']!='REACHABLE':
                     row['status']=row['ssh']; continue
+                if registered_only and not cred:
+                    row['status']='UNREGISTERED_SKIPPED'; continue
                 configfile=directory/'profile.json'
                 if configfile.exists():
                     cfg=read_json(configfile)
                     if cfg.get('profile')!=name or cfg.get('verification')!={'expectedHostname':row['identity']['hostname'],'expectedUser':row['identity']['user']}:
                         row['status']='IDENTITY_CHANGED_REVIEW_REQUIRED'; continue
-                elif not prepare:
+                elif not prepare or registered_only:
                     row['status']='NEEDS_PREPARATION'; continue
                 if cred:
                     if (state/'instance.lock').exists() or alive(rec):

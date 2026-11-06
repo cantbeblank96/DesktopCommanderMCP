@@ -17,7 +17,7 @@ def print_report(report):
     print(json.dumps(report, ensure_ascii=False, indent=2), flush=True)
 
 
-def watch(fleet: Fleet):
+def watch(fleet: Fleet, *, registered_only: bool = False):
     with exclusive(fleet.root/'watch.lock'):
         atomic_json(fleet.root/'watch-process.json',
                     {'process':process_stamp(os.getpid()),'startedAt':utc(),'config':str(fleet.filename)})
@@ -29,7 +29,8 @@ def watch(fleet: Fleet):
             while not fleet.stopping:
                 try:
                     with exclusive(fleet.root/'operation.lock'):
-                        report=fleet.sync(prepare=True,enroll=True)
+                        report=fleet.sync(prepare=True, enroll=not registered_only,
+                                          registered_only=registered_only)
                     brief=[{k:r.get(k) for k in ('port','status','cloudStatus','diagnostic')} for r in report['nodes']]
                     if brief!=previous:
                         print_report({'at':utc(),'nodes':brief}); previous=brief
@@ -52,7 +53,11 @@ def main():
     parser.add_argument('--config',type=Path,required=True,help='Private fleet JSON (do not commit it)')
     parser.add_argument('action',choices=['scan','sync','authorize','status','dashboard','watch','start-watch','stop-watch','stop-workers','resume'])
     parser.add_argument('--ports',nargs='+',type=int,help='Subset of already-approved inventory ports')
+    parser.add_argument('--registered-only', action='store_true',
+                        help='Watch and recover existing registered profiles without preparing or enrolling new nodes')
     args=parser.parse_args()
+    if args.registered_only and args.action not in ('watch', 'start-watch'):
+        parser.error('--registered-only requires watch or start-watch')
     fleet=Fleet(args.config)
     if args.ports:
         for port in args.ports: fleet.profile(port)
@@ -75,7 +80,7 @@ def main():
         return
     if args.action=='watch':
         if args.ports: raise FleetError('watch uses the complete approved inventory, not --ports')
-        watch(fleet); return
+        watch(fleet, registered_only=args.registered_only); return
     if args.action=='start-watch':
         with exclusive(fleet.root/'start.lock'):
             marker=fleet.root/'watch-process.json'
@@ -84,8 +89,11 @@ def main():
             if args.ports: raise FleetError('watch uses the complete approved inventory')
             log=fleet.root/'watch.log'
             fd=os.open(log,os.O_WRONLY|os.O_CREAT|os.O_APPEND|os.O_NOFOLLOW,0o600)
+            command = [sys.executable, str(Path(__file__).resolve()), '--config', str(fleet.filename), 'watch']
+            if args.registered_only:
+                command.append('--registered-only')
             with os.fdopen(fd,'ab') as out:
-                p=subprocess.Popen([sys.executable,str(Path(__file__).resolve()),'--config',str(fleet.filename),'watch'],
+                p=subprocess.Popen(command,
                                    stdin=subprocess.DEVNULL,stdout=out,stderr=subprocess.STDOUT,start_new_session=True)
             for _ in range(50):
                 if p.poll() is not None: raise FleetError(f'Watcher exited ({p.returncode}); inspect {log}')
