@@ -3,17 +3,17 @@
 
 ## Fork extension: SSH-backed Devices
 
-This fork adds independently authorized SSH-backed devices: machine A runs the
-remote bridge while the existing file and process tools execute on machine B.
-The original local-device mode remains available. Build this fork; the upstream
-`npx ...@latest` package does **not** contain these changes.
+ChatGPT and Claude on the web can already control one computer through Desktop Commander Remote MCP. This fork adds a bridge for several machines at once. A Linux host stays connected to the cloud. Each additional server joins the same account as its own device over SSH. The original file, terminal, and process tools then run on the machine you name. Several devices can be online together, and one tool call acts only on the selected device.
 
-See [implementation and setup](notes/SSH_DEVICE_IMPLEMENTATION.md),
-[fleet discovery and browser authorization](notes/SSH_DEVICE_FLEET.md), and
-[current verification status](notes/SSH_DEVICE_RELEASE_STATUS.md).
-Examples are in [`examples/ssh-device/`](examples/ssh-device/).
-Each new device requires its own browser authorization. Deployment or a
-successful SSH check alone does not add a device to the website.
+The upstream npm package does **not** include this bridge. Clone this fork and build it. Do not start it with `npx ...@latest`.
+
+- **[中文上手说明：一台主机连接多台云服务器](notes/chatgpt-ssh-bridge/README.md)** — first connection, checking which machine ran the command, reconnecting, and restarting after a reboot
+- [Implementation and setup](notes/SSH_DEVICE_IMPLEMENTATION.md)
+- [Fleet discovery and browser authorization](notes/SSH_DEVICE_FLEET.md)
+- [Verification status](notes/SSH_DEVICE_RELEASE_STATUS.md)
+- Examples: [`examples/ssh-device/`](examples/ssh-device/)
+
+Each new server needs its own browser authorization. A successful SSH login alone does not add it to the device list. The original local remote mode remains available for the host itself. SSH failure stays on that server and does not fall back to the host.
 
 
 [![npm downloads](https://img.shields.io/npm/dw/@wonderwhy-er/desktop-commander)](https://www.npmjs.com/package/@wonderwhy-er/desktop-commander)
@@ -46,6 +46,7 @@ Work with code and text, run processes, and automate tasks, going far beyond oth
 > The MCP server below still works great with Claude Desktop and other MCP clients — the app is for those who want a dedicated, polished experience.
 
 ## Table of Contents
+- [SSH-backed devices in this fork](#fork-extension-ssh-backed-devices)
 - [Features](#features)
 - [How to install](#how-to-install)
 - [Getting Started](#getting-started)
@@ -501,6 +502,8 @@ How it works:
 - ✅ Device only runs when you start it
 - ✅ Commands execute under your user permissions
 - ✅ Secure OAuth authentication and encrypted communication channel
+
+To keep your own computer and several cloud servers online at the same time, use this fork's SSH bridge. The Chinese walkthrough is [一台主机连接多台云服务器](notes/chatgpt-ssh-bridge/README.md).
 
 </details>
 

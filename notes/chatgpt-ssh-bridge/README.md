@@ -4,7 +4,7 @@ ChatGPT 网页已经可以通过 [Desktop Commander Remote MCP](https://mcp.desk
 
 这篇说明的是本仓库在此之上补的一层桥接：一台常开的 Linux 主机 A，用 SSH 把另外几台云主机也登记成同一账号里的独立设备。本地主机和多台云主机可以同时在线，ChatGPT 点名哪一台，原来的工具就作用在哪一台。ChatGPT 不需要自己去执行 SSH。
 
-本功能在 fork 的 `feature/ssh-backed-devices` 分支。它还没有合并进上游 `main`，也没有发布成 npm 包。请使用这个分支自己构建，不要用 `npx ...@latest` 来运行这里的 SSH 连接。
+这份能力在本 fork 的 `main` 分支。上游仓库的 `main` 和 npm 上的安装包还不包含它。克隆本仓库后直接构建，不要用 `npx ...@latest` 来运行这里的 SSH 连接。
 
 原项目是 [wonderwhy-er/DesktopCommanderMCP](https://github.com/wonderwhy-er/DesktopCommanderMCP)，MIT 许可，版权归 Eduard Ruzga 与 Desktop Commander 贡献者。这里保留了上游历史，只增加 SSH 设备这层能力。
 
@@ -48,12 +48,11 @@ ChatGPT 先把工具调用交给官网的 Remote MCP。官网按设备身份找�
 
 ## 第一步：先让本地主机上线
 
-在 A 上取得这个分支并构建：
+在 A 上克隆本仓库并构建：
 
 ```sh
 git clone https://github.com/cantbeblank96/DesktopCommanderMCP.git
 cd DesktopCommanderMCP
-git switch feature/ssh-backed-devices
 npm install
 npm run build
 ```
