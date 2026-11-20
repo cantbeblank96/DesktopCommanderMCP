@@ -191,5 +191,23 @@ class FleetTests(unittest.TestCase):
         html=self.fleet.dashboard(report).read_text()
         self.assertNotIn('<script>',html); self.assertIn('&lt;script&gt;',html)
 
+    def test_dashboard_write_failure_stays_inside_maintenance(self):
+        with patch.object(self.fleet,'reap') as reap, patch.object(self.fleet,'dashboard',side_effect=OSError(28,'No space left on device')):
+            lib.maintain_watcher(self.fleet)
+            reap.assert_called_once()
+
+    def test_watch_continues_after_dashboard_enospc(self):
+        spec=importlib.util.spec_from_file_location('ssh_fleet_cli',Path(__file__).resolve().parents[1]/'scripts'/'ssh-fleet.py')
+        cli=importlib.util.module_from_spec(spec); spec.loader.exec_module(cli)
+        self.fleet.config['intervalSeconds']=30
+        def stop_after_wait(_seconds): self.fleet.stopping=True
+        with patch.object(self.fleet,'sync',return_value={'nodes':[]}) as sync, \
+             patch.object(self.fleet,'dashboard',side_effect=OSError(28,'No space left on device')), \
+             patch.object(cli.time,'sleep',side_effect=stop_after_wait), \
+             patch.object(cli.signal,'signal'):
+            cli.watch(self.fleet, registered_only=True)
+        sync.assert_called_once_with(prepare=True, enroll=False, registered_only=True)
+        self.assertIn('"startedAt"', (self.fleet.root/'watch-process.json').read_text())
+
 
 if __name__=='__main__': unittest.main()

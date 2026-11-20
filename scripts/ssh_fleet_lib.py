@@ -144,6 +144,19 @@ def alive(record: dict[str, Any] | None) -> bool:
     return bool(stamp and process_stamp(stamp.get("pid", -1)) == stamp)
 
 
+def maintain_watcher(fleet: Any) -> None:
+    """Refresh child records and the local page.
+
+    A failed status-file write, including a full disk, must not end discovery
+    or stop the device bridges. The next interval retries the same refresh.
+    """
+    try:
+        fleet.reap()
+        fleet.dashboard()
+    except Exception as e:
+        print(f"{utc()} maintenance {type(e).__name__}: {e}", flush=True)
+
+
 def run(args: list[str], *, timeout: int = 20, input_data: str | None = None,
         env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
     return subprocess.run(args, input=input_data, text=True, capture_output=True,

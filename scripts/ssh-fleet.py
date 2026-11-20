@@ -10,7 +10,7 @@ import signal
 import subprocess
 import sys
 import time
-from ssh_fleet_lib import Fleet, FleetError, alive, atomic_json, exclusive, process_stamp, read_json, utc
+from ssh_fleet_lib import Fleet, FleetError, alive, atomic_json, exclusive, maintain_watcher, process_stamp, read_json, utc
 
 
 def print_report(report):
@@ -38,13 +38,12 @@ def watch(fleet: Fleet, *, registered_only: bool = False):
                     print(f'{utc()} {type(e).__name__}: {e}',flush=True)
                 deadline=time.monotonic()+fleet.config['intervalSeconds']
                 while time.monotonic()<deadline and not fleet.stopping:
-                    fleet.reap()
-                    fleet.dashboard()
+                    maintain_watcher(fleet)
                     time.sleep(min(5,max(0,deadline-time.monotonic())))
         finally:
-            fleet.reap()
             # Stopping discovery leaves independent bridges running; stop-workers
             # is an explicit and separately scoped action.
+            maintain_watcher(fleet)
             print('Fleet watcher stopped; device bridges were not stopped.',flush=True)
 
 
